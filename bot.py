@@ -26,6 +26,7 @@ app = Flask(__name__)
 
 
 async def shorten_clckru(url):
+    """Shorten URL using clck.ru (Яндекс)"""
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://clck.ru/--?url={encoded_url}"
@@ -42,6 +43,7 @@ async def shorten_clckru(url):
 
 
 async def shorten_goosu(url):
+    """Shorten URL using goo.su"""
     try:
         api_url = "https://goo.su/api/shorten"
         payload = {"url": url}
@@ -58,6 +60,7 @@ async def shorten_goosu(url):
 
 
 async def shorten_isgd(url):
+    """Shorten URL using is.gd"""
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://is.gd/create.php?format=simple&url={encoded_url}"
@@ -74,6 +77,7 @@ async def shorten_isgd(url):
 
 
 async def shorten_tinyurl(url):
+    """Shorten URL using TinyURL"""
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://tinyurl.com/api-create.php?url={encoded_url}"
@@ -90,6 +94,7 @@ async def shorten_tinyurl(url):
 
 
 async def shorten_all(url):
+    """Get shortened URLs from all available services"""
     shorteners = [shorten_clckru, shorten_goosu, shorten_isgd, shorten_tinyurl]
     results = []
     
@@ -106,6 +111,7 @@ async def shorten_all(url):
 
 
 async def start(update, context):
+    """Send welcome message"""
     await update.message.reply_text(
         "Привет! Отправь мне ссылку, и я сокращу ее через несколько сервисов.\n\n"
         "Поддерживаемые сокращалки:\n"
@@ -118,6 +124,7 @@ async def start(update, context):
 
 
 async def handle_message(update, context):
+    """Handle incoming messages with URLs"""
     text = update.message.text or update.message.caption or ""
     
     urls = URL_REGEX.findall(text)
@@ -158,23 +165,30 @@ def health():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    asyncio.run(process_update(update))
-    return 'OK'
-
-
-async def process_update(update):
-    await application.process_update(update)
+    """Handle incoming webhook from Telegram"""
+    try:
+        update = Update.de_json(request.get_json(force=True), bot)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
+        loop.close()
+        return 'OK', 200
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return 'Error', 500
 
 
 def main():
+    """Start the bot with webhook"""
     global application, bot
     
     application = Application.builder().token(TOKEN).build()
     bot = Bot(token=TOKEN)
     
     # Инициализация
-    asyncio.run(application.initialize())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.initialize())
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
@@ -182,10 +196,18 @@ def main():
     
     logger.info("Starting bot with webhook...")
     
-    webhook_url = f"{WEBHOOK_URL}/webhook"
-    asyncio.run(bot.set_webhook(url=webhook_url))
+    # Set webhook
+    if WEBHOOK_URL:
+        webhook_url = f"{WEBHOOK_URL}/webhook"
+        loop.run_until_complete(bot.set_webhook(url=webhook_url))
+        logger.info(f"Webhook set: {webhook_url}")
+    else:
+        logger.warning("WEBHOOK_URL not set!")
     
-    app.run(host='0.0.0.0', port=PORT)
+    loop.close()
+    
+    # Start Flask
+    app.run(host='0.0.0.0', port=PORT, threaded=True)
 
 
 if __name__ == "__main__":
