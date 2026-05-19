@@ -173,6 +173,9 @@ def main():
     application = Application.builder().token(TOKEN).build()
     bot = Bot(token=TOKEN)
     
+    # Инициализация
+    asyncio.run(application.initialize())
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
