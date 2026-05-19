@@ -2,8 +2,10 @@ import os
 import re
 import logging
 import aiohttp
+import asyncio
 from urllib.parse import quote
-from telegram import Update
+from flask import Flask, request
+from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(
@@ -13,14 +15,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN", "8741430813:AAHf5_VdaU6rjFYnQYK4sq_my8rWtk4ZaOI")
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+PORT = int(os.getenv("PORT", 10000))
 
 URL_REGEX = re.compile(
     r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
 )
 
+app = Flask(__name__)
 
-async def shorten_clckru(url: str) -> str | None:
-    """Shorten URL using clck.ru"""
+
+async def shorten_clckru(url: str):
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://clck.ru/--?url={encoded_url}"
@@ -29,15 +34,14 @@ async def shorten_clckru(url: str) -> str | None:
                 if response.status == 200:
                     result = await response.text()
                     if result and result.startswith('http'):
-                        return result.strip()
+                        return (result.strip(), "Яндекс")
         return None
     except Exception as e:
         logger.error(f"clck.ru error: {e}")
         return None
 
 
-async def shorten_goosu(url: str) -> str | None:
-    """Shorten URL using goo.su"""
+async def shorten_goosu(url: str):
     try:
         api_url = "https://goo.su/api/shorten"
         payload = {"url": url}
@@ -46,92 +50,64 @@ async def shorten_goosu(url: str) -> str | None:
                 if response.status == 200:
                     data = await response.json()
                     if data and data.get('short_url'):
-                        return data['short_url']
+                        return (data['short_url'], "goo.su")
         return None
     except Exception as e:
         logger.error(f"goo.su error: {e}")
         return None
 
 
-async def shorten_url(url: str) -> str | None:
-    """Try multiple shorteners, return first successful"""
-    shorteners = [shorten_clckru, shorten_goosu]
+async def shorten_isgd(url: str):
+    try:
+        encoded_url = quote(url, safe='')
+        api_url = f"https://is.gd/create.php?format=simple&url={encoded_url}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=10) as response:
+                if response.status == 200:
+                    result = await response.text()
+                    if result and result.startswith('http'):
+                        return (result.strip(), "is.gd")
+        return None
+    except Exception as e:
+        logger.error(f"is.gd error: {e}")
+        return None
+
+
+async def shorten_tinyurl(url: str):
+    try:
+        encoded_url = quote(url, safe='')
+        api_url = f"https://tinyurl.com/api-create.php?url={encoded_url}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=10) as response:
+                if response.status == 200:
+                    result = await response.text()
+                    if result and result.startswith('http'):
+                        return (result.strip(), "TinyURL")
+        return None
+    except Exception as e:
+        logger.error(f"tinyurl error: {e}")
+        return None
+
+
+async def shorten_all(url: str):
+    shorteners = [shorten_clckru, shorten_goosu, shorten_isgd, shorten_tinyurl]
+    results = []
     
     for shortener in shorteners:
         try:
             result = await shortener(url)
-            if result:
-                return result
+            if result and result[0] not in [r[0] for r in results]:
+                results.append(result)
         except Exception as e:
             logger.error(f"Shortener error: {e}")
             continue
     
-    return None
+    return results
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send welcome message"""
     await update.message.reply_text(
-        "👋 Привет! Отправь мне ссылку, и я сокращу её.\n\n"
-        "Поддерживаемые сокращалки:\n"
-        "• clck.ru\n"
-        "• goo.su\n\n"
-        "Просто отправь URL в сообщении."
-    )
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming messages with URLs"""
-    text = update.message.text or update.message.caption or ""
-    
-    urls = URL_REGEX.findall(text)
-    
-    if not urls:
-        await update.message.reply_text(
-            "❌ В сообщении не найдено ссылок. Отправьте URL для сокращения."
-        )
-        return
-    
-    processing_msg = await update.message.reply_text("⏳ Сокращаю ссылки...")
-    
-    results = []
-    for url in urls:
-        shortened = await shorten_url(url)
-        if shortened:
-            results.append(f"🔗 [{url[:50]}{'...' if len(url) > 50 else ''}]({shortened})")
-        else:
-            results.append(f"❌ Не удалось сократить: {url[:50]}{'...' if len(url) > 50 else ''}")
-    
-    result_text = "\n\n".join(results)
-    
-    await processing_msg.delete()
-    
-    if results:
-        await update.message.reply_text(
-            f"✅ Результат:\n\n{result_text}",
-            parse_mode='Markdown',
-            disable_web_page_preview=True
-        )
-
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Log errors"""
-    logger.error(f"Update {update} caused error {context.error}")
-
-
-def main():
-    """Start the bot"""
-    application = Application.builder().token(TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    application.add_error_handler(error_handler)
-    
-    logger.info("Bot started!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
+        "👋 Привет! Отправь мне ссылку, и я сокращу её через несколько сервисов.\n\n"
+        "📋 Поддерживаемые сокращалки:\n"
+        "• clck.ru (Яндекс)\n"
+        "• goo.s
