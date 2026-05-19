@@ -110,4 +110,4 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Привет! Отправь мне ссылку, и я сокращу её через несколько сервисов.\n\n"
         "📋 Поддерживаемые сокращалки:\n"
         "• clck.ru (Яндекс)\n"
-        "• goo.s
+        "• goo.su\n"
