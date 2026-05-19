@@ -25,7 +25,7 @@ URL_REGEX = re.compile(
 app = Flask(__name__)
 
 
-async def shorten_clckru(url: str):
+async def shorten_clckru(url):
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://clck.ru/--?url={encoded_url}"
@@ -41,7 +41,7 @@ async def shorten_clckru(url: str):
         return None
 
 
-async def shorten_goosu(url: str):
+async def shorten_goosu(url):
     try:
         api_url = "https://goo.su/api/shorten"
         payload = {"url": url}
@@ -57,7 +57,7 @@ async def shorten_goosu(url: str):
         return None
 
 
-async def shorten_isgd(url: str):
+async def shorten_isgd(url):
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://is.gd/create.php?format=simple&url={encoded_url}"
@@ -73,7 +73,7 @@ async def shorten_isgd(url: str):
         return None
 
 
-async def shorten_tinyurl(url: str):
+async def shorten_tinyurl(url):
     try:
         encoded_url = quote(url, safe='')
         api_url = f"https://tinyurl.com/api-create.php?url={encoded_url}"
@@ -89,7 +89,7 @@ async def shorten_tinyurl(url: str):
         return None
 
 
-async def shorten_all(url: str):
+async def shorten_all(url):
     shorteners = [shorten_clckru, shorten_goosu, shorten_isgd, shorten_tinyurl]
     results = []
     
@@ -105,9 +105,85 @@ async def shorten_all(url: str):
     return results
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     await update.message.reply_text(
-        "👋 Привет! Отправь мне ссылку, и я сокращу её через несколько сервисов.\n\n"
-        "📋 Поддерживаемые сокращалки:\n"
-        "• clck.ru (Яндекс)\n"
-        "• goo.su\n"
+        "Привет! Отправь мне ссылку, и я сокращу ее через несколько сервисов.\n\n"
+        "Поддерживаемые сокращалки:\n"
+        "- clck.ru (Яндекс)\n"
+        "- goo.su\n"
+        "- is.gd\n"
+        "- TinyURL\n\n"
+        "Просто отправь URL в сообщении."
+    )
+
+
+async def handle_message(update, context):
+    text = update.message.text or update.message.caption or ""
+    
+    urls = URL_REGEX.findall(text)
+    
+    if not urls:
+        await update.message.reply_text(
+            "В сообщении не найдено ссылок. Отправьте URL для сокращения."
+        )
+        return
+    
+    all_results = []
+    
+    for url in urls:
+        shortened_list = await shorten_all(url)
+        
+        if shortened_list:
+            url_results = [f"{short_url} ({service})" for short_url, service in shortened_list]
+            all_results.append(
+                f"Оригинал: {url[:60]}{'...' if len(url) > 60 else ''}\n"
+                + "\n".join(url_results)
+            )
+        else:
+            all_results.append(f"Не удалось сократить: {url[:50]}{'...' if len(url) > 50 else ''}")
+    
+    result_text = "\n\n".join(all_results)
+    
+    if result_text:
+        await update.message.reply_text(
+            f"Результаты сокращения:\n\n{result_text}",
+            disable_web_page_preview=True
+        )
+
+
+@app.route('/')
+def health():
+    return 'Bot is running!'
+
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    asyncio.run(process_update(update))
+    return 'OK'
+
+
+async def process_update(update):
+    await application.process_update(update)
+
+
+def main():
+    global application, bot
+    
+    application = Application.builder().token(TOKEN).build()
+    bot = Bot(token=TOKEN)
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    logger.info("Starting bot with webhook...")
+    
+    webhook_url = f"{WEBHOOK_URL}/webhook"
+    asyncio.run(bot.set_webhook(url=webhook_url))
+    
+    app.run(host='0.0.0.0', port=PORT)
+
+
+if __name__ == "__main__":
+    main()
