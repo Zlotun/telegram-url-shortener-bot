@@ -2,8 +2,10 @@ import os
 import re
 import logging
 import aiohttp
+import asyncio
 from urllib.parse import quote
-from telegram import Update
+from flask import Flask, request
+from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(
@@ -13,10 +15,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN", "8741430813:AAHf5_VdaU6rjFYnQYK4sq_my8rWtk4ZaOI")
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+PORT = int(os.getenv("PORT", 10000))
 
 URL_REGEX = re.compile(
     r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
 )
+
+app = Flask(__name__)
 
 
 async def shorten_clckru(url: str) -> str | None:
@@ -92,8 +98,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    processing_msg = await update.message.reply_text("⏳ Сокращаю ссылки...")
-    
     results = []
     for url in urls:
         shortened = await shorten_url(url)
@@ -104,8 +108,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     result_text = "\n\n".join(results)
     
-    await processing_msg.delete()
-    
     if results:
         await update.message.reply_text(
             f"✅ Результат:\n\n{result_text}",
@@ -114,23 +116,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Log errors"""
-    logger.error(f"Update {update} caused error {context.error}")
+# Flask routes
+@app.route('/')
+def health():
+    return 'Bot is running!'
+
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle incoming webhook from Telegram"""
+    update = Update.de_json(request.get_json(force=True), bot)
+    asyncio.run(process_update(update))
+    return 'OK'
+
+
+async def process_update(update: Update):
+    """Process update from webhook"""
+    await application.process_update(update)
 
 
 def main():
-    """Start the bot"""
+    """Start the bot with webhook"""
+    global application, bot
+    
     application = Application.builder().token(TOKEN).build()
+    bot = Bot(token=TOKEN)
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    application.add_error_handler(error_handler)
+    logger.info("Starting bot with webhook...")
     
-    logger.info("Bot started!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Set webhook
+    webhook_url = f"{WEBHOOK_URL}/webhook"
+    asyncio.run(bot.set_webhook(url=webhook_url))
+    
+    # Start Flask
+    app.run(host='0.0.0.0', port=PORT)
 
 
 if __name__ == "__main__":
