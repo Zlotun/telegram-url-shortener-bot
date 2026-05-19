@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: telegram-url-shortener
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        value: 8741430813:AAHf5_VdaU6rjFYnQYK4sq_my8rWtk4ZaOI
+    plan: free
